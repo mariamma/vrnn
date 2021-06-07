@@ -100,7 +100,7 @@ def show_blizzard_batch(sample_batched):
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Using {} device".format(device))
 
-def Gaussian(y, mu, sig):
+def Gaussian(y, m, sigma):
     """
     Gaussian negative log-likelihood
     Parameters
@@ -111,17 +111,23 @@ def Gaussian(y, mu, sig):
     """
     # nll = 0.5 * T.sum(T.sqr(y - mu) / sig**2 + 2 * T.log(sig) +
     #                   T.log(2 * np.pi), axis=-1)
-    xmy = ((y - mu)**2).sum(2)
-    K =  - 0.5* xmy / (s**2) -torch.log(sig)
+    x = y.view(4,200)
+    mu = m.view(4,200)
+    sig = sigma.view(4,200)
+    xmy = (x.sub(mu).pow(2)).div(sig)
+    sig_log = torch.log(sig).mul(2)
+    print("Xmy ::  ", xmy.size(), " sig size :: ", sig_log.size())
+    K =  - xmy - sig_log
+    print("K size :: ", K.size())
     return K
 
 # Define model
 class NeuralNetwork(nn.Module):
     def __init__(self):
         super(NeuralNetwork, self).__init__()
-        self.hn = torch.randn(2, 3, 20)
-        self.cn = torch.randn(2, 3, 20)
-        
+        self.hn = torch.randn(1, 4, 4000)
+        self.cn = torch.randn(1, 4, 4000)
+
         self.flatten = nn.Flatten()
         self.linear_relu_stack = nn.Sequential(
             nn.Linear(200, 800),
@@ -144,15 +150,20 @@ class NeuralNetwork(nn.Module):
             nn.Linear(800, 800),
             nn.ReLU()
         )
-        self.theta_sig = nn.Linear(800,200)
-        self.theta_mu = nn.Softplus(800,200)
-        
+        self.theta_mu = nn.Linear(800,200)
+        self.theta_sig = nn.Sequential( 
+                nn.Linear(800,200),
+                nn.ReLU(),
+                nn.Softplus(200,200)
+                )
+
 
     def forward(self, x):
         x = self.flatten(x)
         linear_output = self.linear_relu_stack(x)
-        rnn_output, (self.hn, self.cn) = self.rnn(linear_output, (self.hn, self.cn))
-        theta_output = self.linear_theta_stack(hn)
+        print("Linear output size :: ", linear_output.size())
+        rnn_output, (self.hn, self.cn) = self.rnn(linear_output.view(-1, 4, 800), (self.hn, self.cn))
+        theta_output = self.linear_theta_stack(self.hn)
         theta_mu_output = self.theta_mu(theta_output)
         theta_sig_output = self.theta_sig(theta_output)
         # self.recon = Gaussian(x, theta_mu_output, theta_sig_output)
@@ -163,7 +174,7 @@ model = NeuralNetwork().to(device)
 print(model)
 
 # loss_fn = nn.CrossEntropyLoss()
-loss_fn = None
+loss_fn = Gaussian
 optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
 
 
@@ -176,17 +187,18 @@ def train(dataloader, model, loss_fn, optimizer):
         # Compute prediction error
         print("X :: ", X.size())
         mu, sigma, rnn_output = model(X.float())
-        print("Pred :: ", mu, sigma)
-        loss = model.recon_term
-        print("Loss :: ", loss)
+        print("Size of mu and sigma :: ", mu.size(), sigma.size())
+        loss = loss_fn(X, mu, sigma)
+        # print("Loss :: ", loss)
 
         # Backpropagation
         optimizer.zero_grad()
-        loss.backward()
+        loss.mean().backward(retain_graph=True)
         optimizer.step()
 
         if batch % 100 == 0:
-            loss, current = loss.item(), batch * len(X)
+            print(batch, len(X))
+            loss, current = loss.mean(), batch * len(X)
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
 epochs = 5
