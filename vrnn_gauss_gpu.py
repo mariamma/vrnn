@@ -101,7 +101,32 @@ def show_blizzard_batch(sample_batched):
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Using {} device".format(device))
 
-def Gaussian(y, m, sigma):
+def KLGaussian(phi_mu_output, phi_sig_output, prior_mu_output, prior_sig_output):   
+    batch_size = BATCH_SIZE
+    mu1 = phi_mu_output.view(batch_size, 200)
+    sig1 = phi_sig_output.view(batch_size, 200)
+    mu2 = prior_mu_output.view(batch_size, 200)
+    sig2 = prior_sig_output.view(batch_size, 200)
+
+    sig1 = sig1.add(.000001)
+    sig2 = sig2.add(.000001)
+    sig2_log = torch.log(sig2)
+    sig1_log = torch.log(sig1)
+    res1 = sig2_log.sub(sig1_log)
+
+    mu_sub = mu1.sub(mu2)
+    mu_sub_pow = mu_sub.pow(2)
+    sig1_pow = sig1.pow(2)
+    sig2_pow = sig2.pow(2)
+    mu_sig_add = sig1_pow.add(mu_sub_pow)
+    div_op = mu_sig_add.true_divide(sig2_pow.sub(1))
+    res2 = div_op.mul(0.5)
+    res = res1.add(res2)
+    return res
+
+
+def Gaussian(y, m, sigma, phi_mu_output, phi_sig_output, prior_mu_output, prior_sig_output):
+    pi = 3.1415927410125732
     """
     Gaussian negative log-likelihood
     Parameters
@@ -129,8 +154,19 @@ def Gaussian(y, m, sigma):
     sig_log = torch.log(sig).mul(2)
     # print("Xmy ::  ", xmy.size(), " Xmy mean :: ", xmy.mean())
     # print("sig size :: ", sig_log.size(), " sig mean :: ", sig_log.mean())
-    K =  xmy.add(sig_log)
+    K1 =  xmy.add(sig_log)
+
+    tensor = torch.ones((2,), dtype=torch.float64, device=y.device)
+    pi_tensor = tensor.new_full((batch_size, 200), 2*pi)
+    pi_log = torch.log(pi_tensor)
+    K2 = K1.add(pi_log)
+    K = K2.mul(0.5)
+    res = KLGaussian(phi_mu_output, phi_sig_output, prior_mu_output, prior_sig_output)
+    return K.add(res)
     # print("K size :: ", K.size(), " K mean :: ", K.mean())
+    
+    #KL Gaussian loss
+
     return K
 
 # Define model
@@ -214,14 +250,15 @@ class NeuralNetwork(nn.Module):
 
 
     def forward(self, x):
+        
         x = self.flatten(x)
         sn = torch.randn(1, BATCH_SIZE, 4000, device="cuda")
         x_linear_output = self.x_linear_stack(x)
         # print("x_linear_output :: ", x_linear_output.size())
-        print("sn :: ", sn.mean())
+        # print("sn :: ", sn.mean())
 
         phi_linear_input = torch.cat((x_linear_output, sn.view(BATCH_SIZE, 4000)),1)
-        print("phi_linear_input :: ", phi_linear_input.mean())
+        # print("phi_linear_input :: ", phi_linear_input.mean())
         phi_linear_output = self.phi_linear_stack(phi_linear_input)
         phi_mu_output = self.phi_mu(phi_linear_output)
         phi_sig_output = self.phi_sig(phi_linear_output)
@@ -233,14 +270,14 @@ class NeuralNetwork(nn.Module):
         z_linear_stack = torch.normal(phi_mu_output, phi_sig_output)
         z_linear_output = self.z_linear_stack(z_linear_stack)
 
-        print("z_linear_output :: ", z_linear_output.mean())
+        # print("z_linear_output :: ", z_linear_output.mean())
         rnn_input = torch.cat((x_linear_output, z_linear_output),1)
         sn, (hn, cn) = self.rnn(rnn_input.view(-1, BATCH_SIZE, 1200), (self.h0, self.c0))
-        print("rnn_output :: ", sn.size())
+        # print("rnn_output :: ", sn.size())
         # self.sn = rnn_output.detach().clone()
 
-        print("sn :: ", sn.mean())
-        print("hn :: ", hn.mean())
+        # print("sn :: ", sn.mean())
+        # print("hn :: ", hn.mean())
         
         theta_input = torch.cat((z_linear_output, sn.view(BATCH_SIZE, 4000)),1)
         theta_output = self.theta_linear_stack(theta_input)
@@ -263,7 +300,7 @@ def train(dataloader, model, loss_fn, optimizer):
         X = X['blizzard'].to(device)
         theta_mu_output, theta_sig_output, phi_mu_output, phi_sig_output, prior_mu_output, prior_sig_output = model(X.float())
         # print("Size of mu and sigma :: ", mu.mean(), sigma.mean())
-        loss = loss_fn(X, theta_mu_output, theta_sig_output)
+        loss = loss_fn(X, theta_mu_output, theta_sig_output, phi_mu_output, phi_sig_output, prior_mu_output, prior_sig_output)
         # print("Loss :: ", loss.mean())
         # Backpropagation
         optimizer.zero_grad()
