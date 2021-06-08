@@ -119,9 +119,15 @@ def KLGaussian(phi_mu_output, phi_sig_output, prior_mu_output, prior_sig_output)
     sig1_pow = sig1.pow(2)
     sig2_pow = sig2.pow(2)
     mu_sig_add = sig1_pow.add(mu_sub_pow)
-    div_op = mu_sig_add.true_divide(sig2_pow.sub(1))
+    sig2_pow = sig2_pow.add(.0000001)
+    denominator = sig2_pow.sub(1)
+    
+    denominator[denominator == 0] = .0000001
+    div_op = mu_sig_add.true_divide(denominator)
     res2 = div_op.mul(0.5)
-    res = res1.add(res2)
+    res3 = res1.add(res2)
+    res = res3.mul(-1)
+    print("Res1={}, res2={}, res3={}, res={}".format(res1.mean(), res2.mean(), res3.mean(), res.mean()))
     return res
 
 
@@ -161,13 +167,10 @@ def Gaussian(y, m, sigma, phi_mu_output, phi_sig_output, prior_mu_output, prior_
     pi_log = torch.log(pi_tensor)
     K2 = K1.add(pi_log)
     K = K2.mul(0.5)
+    print("K size :: ", K.size(), " K mean :: ", K.mean())
     res = KLGaussian(phi_mu_output, phi_sig_output, prior_mu_output, prior_sig_output)
     return K.add(res)
-    # print("K size :: ", K.size(), " K mean :: ", K.mean())
-    
-    #KL Gaussian loss
 
-    return K
 
 # Define model
 class NeuralNetwork(nn.Module):
@@ -249,10 +252,10 @@ class NeuralNetwork(nn.Module):
                 )
 
 
-    def forward(self, x):
-        
+    def forward(self, x, sn):
+
         x = self.flatten(x)
-        sn = torch.randn(1, BATCH_SIZE, 4000, device="cuda")
+        # sn = torch.randn(1, BATCH_SIZE, 4000, device="cuda")
         x_linear_output = self.x_linear_stack(x)
         # print("x_linear_output :: ", x_linear_output.size())
         # print("sn :: ", sn.mean())
@@ -298,7 +301,10 @@ def train(dataloader, model, loss_fn, optimizer):
     print("Size of dataloader dataset :: ", size)
     for batch, (X ) in enumerate(dataloader):
         X = X['blizzard'].to(device)
-        theta_mu_output, theta_sig_output, phi_mu_output, phi_sig_output, prior_mu_output, prior_sig_output = model(X.float())
+        sn = torch.randn(1, BATCH_SIZE, 4000, device="cuda")
+
+        theta_mu_output, theta_sig_output, phi_mu_output, phi_sig_output, prior_mu_output, prior_sig_output = model(X.float(), sn)
+        print("theta_mu_output={}, theta_sig_output={}, phi_mu_output={}, phi_sig_output={}, prior_mu_output={}, prior_sig_output={}".format(theta_mu_output.mean(), theta_sig_output.mean(), phi_mu_output.mean(), phi_sig_output.mean(), prior_mu_output.mean(), prior_sig_output.mean()))
         # print("Size of mu and sigma :: ", mu.mean(), sigma.mean())
         loss = loss_fn(X, theta_mu_output, theta_sig_output, phi_mu_output, phi_sig_output, prior_mu_output, prior_sig_output)
         # print("Loss :: ", loss.mean())
