@@ -98,7 +98,7 @@ def show_blizzard_batch(sample_batched):
 
 
 # Get cpu or gpu device for training.
-device = "cuda:0" if torch.cuda.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Using {} device".format(device))
 
 def Gaussian(y, m, sigma):
@@ -137,7 +137,10 @@ def Gaussian(y, m, sigma):
 class NeuralNetwork(nn.Module):
     def __init__(self):
         super(NeuralNetwork, self).__init__()
-        
+        self.h0 = torch.randn(1, BATCH_SIZE, 4000, device="cuda")
+        self.c0 = torch.randn(1, BATCH_SIZE, 4000, device="cuda")
+
+
         self.flatten = nn.Flatten()
         self.x_linear_stack = nn.Sequential(
             nn.Linear(200, 600),
@@ -212,33 +215,35 @@ class NeuralNetwork(nn.Module):
 
     def forward(self, x):
         x = self.flatten(x)
-        h0 = torch.randn(1, BATCH_SIZE, 4000, device=x.device)
-        c0 = torch.randn(1, BATCH_SIZE, 4000, device=x.device)
-        sn = torch.randn(1, BATCH_SIZE, 4000, device=x.device)
-
+        sn = torch.randn(1, BATCH_SIZE, 4000, device="cuda")
         x_linear_output = self.x_linear_stack(x)
+        # print("x_linear_output :: ", x_linear_output.size())
+        print("sn :: ", sn.mean())
 
-        phi_linear_input = torch.cat(x_linear_output, sn)
+        phi_linear_input = torch.cat((x_linear_output, sn.view(BATCH_SIZE, 4000)),1)
+        print("phi_linear_input :: ", phi_linear_input.mean())
         phi_linear_output = self.phi_linear_stack(phi_linear_input)
         phi_mu_output = self.phi_mu(phi_linear_output)
         phi_sig_output = self.phi_sig(phi_linear_output)
 
-        prior_linear_output = self.prior_linear_stack(sn)
+        prior_linear_output = self.prior_linear_stack(sn.view(BATCH_SIZE, 4000))
         prior_mu_output = self.prior_mu(prior_linear_output)
         prior_sig_output = self.prior_sig(prior_linear_output)
 
         z_linear_stack = torch.normal(phi_mu_output, phi_sig_output)
         z_linear_output = self.z_linear_stack(z_linear_stack)
 
-        rnn_input = torch.cat(x_linear_output, z_linear_output)
-        rnn_output, (hn, cn) = self.rnn(rnn_input.view(-1, BATCH_SIZE, 1200), (h0, c0))
-        sn = rnn_output
+        print("z_linear_output :: ", z_linear_output.mean())
+        rnn_input = torch.cat((x_linear_output, z_linear_output),1)
+        sn, (hn, cn) = self.rnn(rnn_input.view(-1, BATCH_SIZE, 1200), (self.h0, self.c0))
+        print("rnn_output :: ", sn.size())
+        # self.sn = rnn_output.detach().clone()
 
-        # print("hn :: ", hn.mean())
-        # print("cn :: ", cn.mean())
-        # print("rnn_output :: ", rnn_output.mean())
-        theta_input = torch.cat(z_linear_output, sn)
-        theta_output = self.linear_theta_stack(theta_input)
+        print("sn :: ", sn.mean())
+        print("hn :: ", hn.mean())
+        
+        theta_input = torch.cat((z_linear_output, sn.view(BATCH_SIZE, 4000)),1)
+        theta_output = self.theta_linear_stack(theta_input)
         theta_mu_output = self.theta_mu(theta_output)
         theta_sig_output = self.theta_sig(theta_output)
         return theta_mu_output, theta_sig_output, phi_mu_output, phi_sig_output, prior_mu_output, prior_sig_output
