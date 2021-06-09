@@ -98,8 +98,42 @@ def show_blizzard_batch(sample_batched):
 
 
 # Get cpu or gpu device for training.
-device = "cuda:0" if torch.cuda.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Using {} device".format(device))
+
+
+def Gaussian(y, m, sigma):
+    """
+    Gaussian negative log-likelihood
+    Parameters
+    ----------
+    y   : TensorVariable
+    mu  : FullyConnected (Linear)
+    sig : FullyConnected (Softplus)
+    """
+    # nll = 0.5 * T.sum(T.sqr(y - mu) / sig**2 + 2 * T.log(sig) +
+    #                   T.log(2 * np.pi), axis=-1)
+    batch_size = BATCH_SIZE
+    x = y.view(batch_size, 200)
+    mu = m.view(batch_size, 200)
+    sig = sigma.view(batch_size, 200)
+    # print("X mean :: ", x.mean())
+    # print("Mu mean :: ", mu.mean())
+    # print("Sigma mean :: ", sig.mean())
+    x_mu_diff = x.sub(mu)
+    x_diff_pow = x_mu_diff.pow(2)
+    # print("X mu diff pow :: ", x_diff_pow.mean())
+    sig_pow = sig.pow(2).add(.000001)
+    # print("sig_pow :: ", sig_pow.mean())
+    xmy =  x_diff_pow.true_divide(sig_pow)
+    sig = sig.add(.000001)
+    sig_log = torch.log(sig).mul(2)
+    # print("Xmy ::  ", xmy.size(), " Xmy mean :: ", xmy.mean())
+    # print("sig size :: ", sig_log.size(), " sig mean :: ", sig_log.mean())
+    K =  xmy.add(sig_log)
+    # print("K size :: ", K.size(), " K mean :: ", K.mean())
+    return K
+
 
 # Define model
 class NeuralNetwork(nn.Module):
@@ -159,6 +193,7 @@ def test(dataloader, model):
     size = len(dataloader.dataset)
     model.eval()
     n = 4000
+    loss_value = list()
     rnn_arr = np.empty(shape=[0, n])
     with torch.no_grad():
         # for X in dataloader:
@@ -167,10 +202,13 @@ def test(dataloader, model):
             X = X['blizzard'].to(device)
             # print("X size :: ", X.size())
             theta_mu_output, theta_sig_output, rnn_output = model(X.float())
+            loss = Gaussian(X, theta_mu_output, theta_sig_output)
+            loss_value.append(loss.mean())
             # print("rnn output :: ", rnn_output.size())
-            rnn_out = rnn_output.view(BATCH_SIZE,4000).cpu().numpy()
-            rnn_arr = np.append(rnn_arr, rnn_out, axis=0)    
-    np.savetxt("/home/mariamma/rnn_vae/code/rnn_gauss_out.csv", rnn_arr, delimiter=',')       
+    #         rnn_out = rnn_output.view(BATCH_SIZE,4000).cpu().numpy()
+    #         rnn_arr = np.append(rnn_arr, rnn_out, axis=0)    
+    # np.savetxt("/home/mariamma/rnn_vae/code/rnn_gauss_out.csv", rnn_arr, delimiter=',')       
+    print("Mean :: ", sum(loss_value)/len(loss_value))
     
 model_path = '/home/mariamma/rnn_vae/code/rnn_model.pth'
 model = torch.load(model_path)
